@@ -12,7 +12,6 @@ export default function Home() {
   const [slipList, setSlipList] = useState([]); 
   const [loading, setLoading] = useState(false);
   
-  // ✨ Dashboard Stats State
   const [stats, setStats] = useState({ collected: 0, remaining: 0, paidCount: 0 });
 
   const [exactAmountInput, setExactAmountInput] = useState(""); 
@@ -25,7 +24,6 @@ export default function Home() {
   const [loginData, setLoginData] = useState({ studentId: '', password: '' });
   const [adminPassword, setAdminPassword] = useState('');
 
-  // --- Functions ---
   const fetchStudents = async () => {
     const { data } = await supabase.from('students').select('*').order('student_number', { ascending: true });
     if (data) {
@@ -46,6 +44,9 @@ export default function Home() {
       })));
       const collected = txs.filter(t => t.status === 'approved').reduce((sum, t) => sum + (t.amount || 0), 0);
       setStats(prev => ({ ...prev, collected }));
+    } else if (txs?.length === 0) {
+      setStats(prev => ({ ...prev, collected: 0 }));
+      setSlipList([]);
     }
   };
 
@@ -65,15 +66,29 @@ export default function Home() {
     }
   };
 
+  // ✨ ฟังก์ชันตั้งยอดใหม่ พร้อมรีเซตเงินที่เก็บได้ ✨
   const handleSetExactAmount = async () => {
     const amt = parseInt(exactAmountInput);
     if (isNaN(amt) || amt < 0) return alert("กรุณากรอกตัวเลข");
-    setLoading(true);
-    try {
-      await supabase.from('students').update({ owed_amount: amt }).gt('student_number', 0);
-      alert(`✅ ตั้งยอดใหม่สำเร็จ!`);
-      setExactAmountInput(""); fetchStudents();
-    } catch (err) { alert("Error"); } finally { setLoading(false); }
+    
+    if (window.confirm(`⚠️ คำเตือนจากระบบ: การตั้งยอดใหม่เป็น ฿${amt} จะทำการ "ล้างประวัติสลิปและรีเซตยอดเงินที่เก็บได้" ทั้งหมดเพื่อเริ่มรอบใหม่ คุณ victor007 ยืนยันหรือไม่?`)) {
+      setLoading(true);
+      try {
+        // 1. อัปเดตยอดหนี้ใหม่ให้ทุกคน
+        await supabase.from('students').update({ owed_amount: amt }).gt('student_number', 0);
+        // 2. ล้างประวัติธุรกรรมทั้งหมด (เพื่อรีเซต Collected Amount เป็น 0)
+        await supabase.from('transactions').delete().neq('id', 0);
+        
+        alert(`✅ ตั้งยอดใหม่และรีเซตบัญชีสำเร็จ!`);
+        setExactAmountInput(""); 
+        await fetchStudents(); 
+        await fetchSlips(); 
+      } catch (err) { 
+        alert("เกิดข้อผิดพลาด: " + err.message); 
+      } finally { 
+        setLoading(false); 
+      }
+    }
   };
 
   const handleAddExtraAmount = async () => {
@@ -128,7 +143,7 @@ export default function Home() {
         const newOwed = currentOwed + amtToAdd; 
         await supabase.from('students').update({ owed_amount: newOwed }).eq('student_id', studentId);
         await supabase.from('transactions').delete().eq('id', txId);
-        alert(`🚨 ดึงยอดคืนสำเร็จ! หนี้ใหม่คือ ฿${newOwed}`);
+        alert(`🚨 ดึงยอดคืนสำเร็จ!`);
         fetchSlips(); fetchStudents();
       }
     }
@@ -143,7 +158,8 @@ export default function Home() {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = async () => {
-        const base64Data = reader.result.split(',')[1]; 
+        const fullBase64 = reader.result; 
+        const base64Data = fullBase64.split(',')[1]; 
         const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${process.env.NEXT_PUBLIC_GOOGLE_VISION_API_KEY}`, {
           method: "POST", body: JSON.stringify({ requests: [{ image: { content: base64Data }, features: [{ type: "TEXT_DETECTION" }] }] })
         });
@@ -156,10 +172,10 @@ export default function Home() {
         if (isSuccess && isAmountFound) {
           const newOwed = currentUser.owedAmount - transferAmt;
           await supabase.from('students').update({ owed_amount: newOwed }).eq('student_id', currentUser.studentId);
-          await supabase.from('transactions').insert([{ student_id: currentUser.studentId, slip_image: reader.result, status: 'approved', amount: transferAmt }]);
+          await supabase.from('transactions').insert([{ student_id: currentUser.studentId, slip_image: fullBase64, status: 'approved', amount: transferAmt }]);
           alert(`✅ AI ตรวจพบยอด ฿${transferAmt} สำเร็จ!`); window.location.reload();
         } else { 
-          await supabase.from('transactions').insert([{ student_id: currentUser.studentId, slip_image: reader.result, status: 'pending', amount: transferAmt }]);
+          await supabase.from('transactions').insert([{ student_id: currentUser.studentId, slip_image: fullBase64, status: 'pending', amount: transferAmt }]);
           alert(`⚠️ ส่งแอดมินตรวจแทนนะครับ`); window.location.reload();
         }
       };
@@ -177,7 +193,6 @@ export default function Home() {
         <div className="w-full max-w-5xl">
           {isAdmin ? (
             <div className="space-y-6 my-10 relative z-20">
-              {/* ✨ Dashboard Header ✨ */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                 <div className="p-6 text-center" style={frostedGlassStyle}>
                   <p className="text-[10px] uppercase tracking-widest text-emerald-400 font-bold mb-1">เงินที่เก็บได้แล้ว</p>
@@ -202,8 +217,8 @@ export default function Home() {
               {adminTab === 'dashboard' && (
                 <div className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="p-8" style={frostedGlassStyle}><h2 className="text-xl font-bold mb-4">🎯 ตั้งยอดใหม่</h2><input type="number" placeholder="เช่น 500" value={exactAmountInput} onChange={e => setExactAmountInput(e.target.value)} className="w-full p-4 bg-black/40 rounded-full mb-3 text-center" /><button onClick={handleSetExactAmount} className="w-full py-4 bg-cyan-500/30 rounded-full font-bold">ยืนยัน</button></div>
-                    <div className="p-8" style={frostedGlassStyle}><h2 className="text-xl font-bold mb-4">➕ บวกเพิ่ม</h2><input type="number" placeholder="เช่น 10" value={extraAmountInput} onChange={e => setExtraAmountInput(e.target.value)} className="w-full p-4 bg-black/40 rounded-full mb-3 text-center" /><button onClick={handleAddExtraAmount} className="w-full py-4 bg-amber-500/30 rounded-full font-bold">ยืนยัน</button></div>
+                    <div className="p-8" style={frostedGlassStyle}><h2 className="text-xl font-bold mb-4">🎯 ตั้งยอดใหม่</h2><input type="number" placeholder="เช่น 500" value={exactAmountInput} onChange={e => setExactAmountInput(e.target.value)} className="w-full p-4 bg-black/40 rounded-full mb-3 text-center outline-none border border-white/10" /><button onClick={handleSetExactAmount} className="w-full py-4 bg-cyan-500/30 rounded-full font-bold">ยืนยันและรีเซตบัญชี</button></div>
+                    <div className="p-8" style={frostedGlassStyle}><h2 className="text-xl font-bold mb-4">➕ บวกเพิ่ม</h2><input type="number" placeholder="เช่น 10" value={extraAmountInput} onChange={e => setExtraAmountInput(e.target.value)} className="w-full p-4 bg-black/40 rounded-full mb-3 text-center outline-none border border-white/10" /><button onClick={handleAddExtraAmount} className="w-full py-4 bg-amber-500/30 rounded-full font-bold">ยืนยันบวกเพิ่ม</button></div>
                   </div>
                   <div className="p-8" style={frostedGlassStyle}>
                     <input type="number" placeholder="🔍 ค้นหาเลขที่..." value={searchNumber} onChange={e => setSearchNumber(e.target.value)} className="w-full p-4 bg-black/40 rounded-full mb-6 text-center outline-none focus:border-cyan-500" />
@@ -219,7 +234,9 @@ export default function Home() {
 
               {adminTab === 'slips' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {slipList.map(slip => (
+                  {slipList.length === 0 ? (
+                    <div className="col-span-full py-20 text-center opacity-50">ไม่มีประวัติการชำระเงินในรอบนี้</div>
+                  ) : slipList.map(slip => (
                     <div key={slip.id} className="p-5 flex flex-col" style={innerGlassStyle}>
                       <div className={`p-2 rounded-full mb-4 text-center text-[10px] font-bold ${slip.status === 'approved' ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'}`}>{slip.status === 'approved' ? '✅ อนุมัติแล้ว' : '⚠️ รอตรวจสอบ'}</div>
                       <div className="mb-4 h-64 overflow-hidden rounded-2xl bg-black/40 flex items-center justify-center">{slip.slip_image === 'CASH_PAYMENT' ? <p className="text-6xl">💵</p> : <img src={slip.slip_image} className="w-full h-full object-contain" />}</div>
@@ -243,7 +260,6 @@ export default function Home() {
               )}
             </div>
           ) : (
-            /* --- USER VIEW --- */
             <motion.section initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="max-w-md mx-auto p-8 text-center" style={frostedGlassStyle}>
               <h1 className="font-black mb-8 italic tracking-tighter" style={{ fontSize: 'clamp(2.5rem, 6vw, 4rem)', background: 'linear-gradient(180deg, white, rgba(255,255,255,0.2))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', WebkitTextStroke: '2px rgba(255,255,255,0.8)' }}>Class Fund</h1>
               {!currentUser ? (
