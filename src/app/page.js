@@ -71,6 +71,27 @@ export default function Home() {
     } catch (err) { alert("เกิดข้อผิดพลาด"); } finally { setLoading(false); }
   };
 
+  // ✨ ฟังก์ชันลบนักเรียน ( victor007 requested)
+  const handleDeleteStudent = async (studentId, name) => {
+    if (window.confirm(`🚨 คุณ victor007 แน่ใจหรือไม่ว่าต้องการลบบัญชีของ "${name}"? \n(ข้อมูลการโอนทั้งหมดของเพื่อนคนนี้จะถูกลบไปด้วย)`)) {
+      setLoading(true);
+      try {
+        // ลบ transaction ที่เกี่ยวข้องก่อน (ถ้ามี)
+        await supabase.from('transactions').delete().eq('student_id', studentId);
+        // ลบตัวนักเรียน
+        const { error } = await supabase.from('students').delete().eq('student_id', studentId);
+        
+        if (error) throw error;
+        alert(`🗑️ ลบบัญชีของ ${name} เรียบร้อยแล้วครับ`);
+        fetchStudents();
+      } catch (err) {
+        alert("เกิดข้อผิดพลาดในการลบ: " + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
   const handleConfirmCashPartial = async (studentId, name, currentOwed) => {
     const payAmount = parseInt(cashInputs[studentId]);
     if (!payAmount || isNaN(payAmount) || payAmount <= 0) return alert("กรุณากรอกจำนวนเงินครับ");
@@ -180,8 +201,8 @@ export default function Home() {
     backdropFilter: 'blur(20px)',
     WebkitBackdropFilter: 'blur(20px)',
     border: '1px solid rgba(255, 255, 255, 0.25)',
-    boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.1)',
-    borderRadius: '4rem'
+    boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4)',
+    borderRadius: '3rem'
   };
 
   const innerGlassStyle = {
@@ -193,7 +214,7 @@ export default function Home() {
   };
 
   return (
-    <div className="relative min-h-screen w-full text-slate-100 font-sans overflow-x-hidden">
+    <div className="relative min-h-screen w-full text-slate-100 font-sans overflow-x-hidden flex flex-col">
       
       {/* Background Layer */}
       <div style={{ position: 'fixed', inset: 0, zIndex: -3, background: 'linear-gradient(135deg, #020617 0%, #0a0f24 100%)' }} />
@@ -202,7 +223,7 @@ export default function Home() {
       <div style={{ position: 'fixed', inset: 0, zIndex: -2, overflow: 'hidden', opacity: 0.6 }}>
         <style jsx>{`
           @keyframes moveFirst { 0% { transform: translate(0, 0) rotate(0deg); scale(1); } 50% { transform: translate(10%, 15%) rotate(180deg) scale(1.2); } 100% { transform: translate(0, 0) rotate(360deg) scale(1); } }
-          @keyframes moveSecond { 0% { transform: translate(0, 0) rotate(0deg) scale(1.2); } 50% { transform: translate(-15%, -10%) rotate(-180deg) scale(1); } 100% { transform: translate(0, 0) rotate(-360deg) scale(1.2); } }
+          @keyframes moveSecond { 0% { transform: translate(0, 0) rotate(0deg) scale(1.2); } 50% { transform: translate(-15%, -10%) rotate(-180deg) scale(1); } 100% { transform: translate(0, 0) rotate(360deg) scale(1.2); } }
         `}</style>
         <div style={{ position: 'absolute', top: '-20%', left: '-10%', width: '60vw', height: '60vw', borderRadius: '50%', background: 'radial-gradient(circle at center, rgba(6, 182, 212, 0.4) 0%, rgba(0,0,0,0) 70%)', filter: 'blur(120px)', animation: 'moveFirst 25s infinite ease-in-out alternate' }} />
         <div style={{ position: 'absolute', bottom: '-20%', right: '-10%', width: '60vw', height: '60vw', borderRadius: '50%', background: 'radial-gradient(circle at center, rgba(147, 51, 234, 0.4) 0%, rgba(0,0,0,0) 70%)', filter: 'blur(120px)', animation: 'moveSecond 30s infinite ease-in-out alternate' }} />
@@ -210,7 +231,7 @@ export default function Home() {
 
       <div style={{ position: 'fixed', inset: 0, zIndex: -1, opacity: 0.07, pointerEvents: 'none', backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }} />
 
-      <div className="relative z-10 w-full min-h-screen flex items-center justify-center p-4">
+      <div className="relative z-10 w-full flex-grow flex items-center justify-center p-4">
         <div className="w-full max-w-5xl">
           
           {isAdmin ? (
@@ -251,11 +272,21 @@ export default function Home() {
 
                     <div className="overflow-x-auto relative z-40">
                       <table className="w-full text-left min-w-[600px]">
-                        <thead><tr className="text-slate-200 text-xs border-b border-white/20 uppercase tracking-wider"><th className="pb-4 pl-4">เลขที่</th><th className="pb-4">ชื่อ</th><th className="pb-4 text-center">ยอดค้าง</th><th className="pb-4 text-center">จัดการเงินสด</th></tr></thead>
+                        <thead><tr className="text-slate-200 text-xs border-b border-white/20 uppercase tracking-wider"><th className="pb-4 pl-4">จัดการ</th><th className="pb-4">เลขที่</th><th className="pb-4">ชื่อ</th><th className="pb-4 text-center">ยอดค้าง</th><th className="pb-4 text-center">จัดการเงินสด</th></tr></thead>
                         <tbody>
                           {filteredStudents.length > 0 ? filteredStudents.map(std => (
                             <tr key={std.student_id} className="border-b border-white/10 hover:bg-white/10 transition-colors">
-                              <td className="py-5 pl-4 text-cyan-200 font-mono text-lg">#{std.student_number}</td>
+                              {/* ✨ เพิ่มปุ่มลบบัญชี victor007 ✨ */}
+                              <td className="py-5 pl-4">
+                                <button 
+                                  onClick={() => handleDeleteStudent(std.student_id, std.first_name)} 
+                                  className="p-2 bg-rose-500/10 hover:bg-rose-500/40 text-rose-400 hover:text-white rounded-full transition-all border border-rose-500/20"
+                                  title="ลบบัญชี"
+                                >
+                                  🗑️
+                                </button>
+                              </td>
+                              <td className="py-5 text-cyan-200 font-mono text-lg">#{std.student_number}</td>
                               <td className="py-5 font-medium text-white">{std.first_name} {std.last_name}</td>
                               <td className={`py-5 text-center font-black text-lg ${std.owed_amount > 0 ? 'text-red-400' : 'text-green-300'}`}>฿{std.owed_amount}</td>
                               <td className="py-5 text-center">
@@ -270,7 +301,7 @@ export default function Home() {
                               </td>
                             </tr>
                           )) : (
-                            <tr><td colSpan="4" className="text-center py-10 text-slate-300">ไม่พบข้อมูล</td></tr>
+                            <tr><td colSpan="5" className="text-center py-10 text-slate-300">ไม่พบข้อมูล</td></tr>
                           )}
                         </tbody>
                       </table>
@@ -370,6 +401,13 @@ export default function Home() {
         </div>
       </div>
 
+      {/* ✨ เครดิต victor007 ✨ */}
+      <footer className="relative z-10 w-full text-center py-6">
+        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500 font-light opacity-60">
+          develop by <span className="text-cyan-400/80 font-bold">victor007</span>
+        </p>
+      </footer>
+
       {/* --- AUTH MODALS --- */}
       <AnimatePresence>
         {authMode && (
@@ -387,8 +425,9 @@ export default function Home() {
                   <input placeholder="เลขที่" type="number" onChange={e => setRegData({...regData, studentNumber: e.target.value})} className="w-full p-4 bg-black/40 rounded-full border border-white/20 outline-none text-white focus:border-cyan-400 transition text-center" />
                   <input placeholder="รหัสผ่าน" type="password" onChange={e => setRegData({...regData, password: e.target.value})} className="w-full p-4 bg-black/40 rounded-full border border-white/20 outline-none text-white focus:border-cyan-400 transition text-center" />
                   <button onClick={async () => {
-                    const { error } = await supabase.from('students').insert([{ student_id: regData.studentId, student_number: parseInt(regData.studentNumber), first_name: regData.firstName, last_name: regData.lastName, password: regData.password, owed_amount: 100 }]);
-                    if (error) alert(error.message); else { alert("🎉 สมัครสมาชิกเรียบร้อย!"); setAuthMode('login'); }
+                    // ✨ ตั้งยอดหนี้เริ่มต้นเป็น 0 ( victor007 requested)
+                    const { error } = await supabase.from('students').insert([{ student_id: regData.studentId, student_number: parseInt(regData.studentNumber), first_name: regData.firstName, last_name: regData.lastName, password: regData.password, owed_amount: 0 }]);
+                    if (error) alert(error.message); else { alert("🎉 สมัครสมาชิกเรียบร้อย! (ยอดค้างชำระเริ่มต้น: ฿0)"); setAuthMode('login'); }
                   }} className="w-full py-5 rounded-full font-bold mt-4 text-white hover:scale-105 transition border border-emerald-400/50" style={{ background: 'linear-gradient(to right, #10b981, #14b8a6)' }}>ยืนยันสมัคร</button>
                 </div>
               )}
