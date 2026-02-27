@@ -19,11 +19,13 @@ export default function Home() {
   const [cashInputs, setCashInputs] = useState({});
   const [searchNumber, setSearchNumber] = useState(""); 
   
-  // ✨ เพิ่ม State สำหรับฟีเจอร์ใหม่ ✨
-  const [selectedStudents, setSelectedStudents] = useState([]); // เก็บ ID คนที่ถูกติ๊กเลือก
-  const [bulkDeductAmount, setBulkDeductAmount] = useState(""); // ยอดหักเงินแบบกลุ่ม
-  const [paymentMethod, setPaymentMethod] = useState("transfer"); // 'transfer' | 'cash'
+  // ✨ State สำหรับฟีเจอร์แอดมินสลิป ✨
+  const [selectedStudents, setSelectedStudents] = useState([]); 
+  const [bulkDeductAmount, setBulkDeductAmount] = useState(""); 
+  const [paymentMethod, setPaymentMethod] = useState("transfer"); 
   const [uploadAmount, setUploadAmount] = useState("");
+  const [slipTypeTab, setSlipTypeTab] = useState("transfer"); // แยกประเภทสลิปแอดมิน: 'transfer' | 'cash'
+  const [slipDateFilter, setSlipDateFilter] = useState(""); // ค้นหาสลิปตามวันที่
 
   const [regData, setRegData] = useState({ firstName: '', lastName: '', studentNumber: '', studentId: '', password: '' });
   const [loginData, setLoginData] = useState({ studentId: '', password: '' });
@@ -65,7 +67,6 @@ export default function Home() {
     }
   };
 
-  // ✨ ตั้งเป้าหมาย "รายบุคคล" (ไม่รีเซ็ตทั้งห้อง) ✨
   const handleSetIndividualTarget = async (studentId, name) => {
     const promptAmt = window.prompt(`🎯 ตั้งยอดค้างชำระใหม่ให้ "${name}"\n(ยอดนี้จะถูกทับยอดเดิมของ ${name} คนเดียว):`, 0);
     if (promptAmt !== null) {
@@ -74,8 +75,7 @@ export default function Home() {
         setLoading(true);
         try {
           await supabase.from('students').update({ owed_amount: amt }).eq('student_id', studentId);
-          alert(`✅ ตั้งยอดใหม่ให้ ${name} เป็น ฿${amt} สำเร็จ!`);
-          fetchStudents();
+          alert(`✅ ตั้งยอดใหม่ให้ ${name} เป็น ฿${amt} สำเร็จ!`); fetchStudents();
         } catch (err) { alert("Error"); } finally { setLoading(false); }
       }
     }
@@ -105,7 +105,6 @@ export default function Home() {
     } catch (err) { alert("Error"); } finally { setLoading(false); }
   };
 
-  // ✨ หักเงินสดแบบ "กลุ่ม" (หลายคนพร้อมกัน) ✨
   const handleBulkConfirmCash = async () => {
     const amt = parseInt(bulkDeductAmount);
     if (isNaN(amt) || amt <= 0) return alert("กรุณาระบุยอดเงินที่จะหัก");
@@ -117,7 +116,6 @@ export default function Home() {
         for (let stdId of selectedStudents) {
           const student = studentList.find(s => s.student_id === stdId);
           if (student && student.owed_amount > 0) {
-            // ป้องกันการหักจนติดลบ
             const deductAmt = Math.min(student.owed_amount, amt);
             const newOwed = student.owed_amount - deductAmt;
             await supabase.from('students').update({ owed_amount: newOwed }).eq('student_id', stdId);
@@ -181,16 +179,11 @@ export default function Home() {
       reader.readAsDataURL(file);
       reader.onload = async () => {
         const fullBase64 = reader.result; 
-
-        // ✨ ถ้าเลือกเป็นเงินสด (ข้าม AI ส่งให้แอดมินตรวจเลย) ✨
         if (paymentMethod === 'cash') {
           await supabase.from('transactions').insert([{ student_id: currentUser.studentId, slip_image: fullBase64, status: 'pending', amount: transferAmt }]);
-          alert(`✅ ส่งรูปยืนยันการจ่ายเงินสดแล้ว! รอแอดมินอนุมัตินะครับ`); 
-          window.location.reload();
-          return;
+          alert(`✅ ส่งรูปยืนยันการจ่ายเงินสดแล้ว! รอแอดมินอนุมัตินะครับ`); window.location.reload(); return;
         }
 
-        // ✨ ถ้าเป็นโอนเงิน (ให้ AI ตรวจ) ✨
         const base64Data = fullBase64.split(',')[1]; 
         const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${process.env.NEXT_PUBLIC_GOOGLE_VISION_API_KEY}`, {
           method: "POST", body: JSON.stringify({ requests: [{ image: { content: base64Data }, features: [{ type: "TEXT_DETECTION" }] }] })
@@ -215,6 +208,21 @@ export default function Home() {
   };
 
   const filteredStudents = studentList.filter(std => searchNumber ? std.student_number.toString() === searchNumber.toString() : true);
+  
+  // ✨ กรองสลิปตามประเภท (โอน/เงินสด) และ วันที่ ✨
+  const filteredSlips = slipList.filter(slip => {
+    const isCash = slip.slip_image === 'CASH_PAYMENT' || (slip.status === 'pending' && !slip.slip_image.startsWith('CASH_PAYMENT') && slip.slip_image.length > 100); 
+    // แยกประเภทสลิป
+    if (slipTypeTab === 'cash' && slip.slip_image !== 'CASH_PAYMENT' && slip.status === 'approved') return false; 
+    if (slipTypeTab === 'transfer' && slip.slip_image === 'CASH_PAYMENT') return false;
+    
+    // ค้นหาตามวันที่
+    if (slipDateFilter) {
+      if (!slip.created_at || !slip.created_at.startsWith(slipDateFilter)) return false;
+    }
+    return true;
+  });
+
   const frostedGlassStyle = { background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255, 255, 255, 0.25)', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4)', borderRadius: '3rem' };
   const innerGlassStyle = { background: 'rgba(0, 0, 0, 0.25)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '2.5rem' };
 
@@ -238,7 +246,7 @@ export default function Home() {
 
               <div className="flex gap-4 mb-6 p-3" style={frostedGlassStyle}>
                 <button onClick={() => setAdminTab('dashboard')} className={`flex-1 py-4 rounded-full font-bold ${adminTab === 'dashboard' ? 'bg-cyan-500/30' : ''}`}>รายชื่อ</button>
-                <button onClick={() => setAdminTab('slips')} className={`flex-1 py-4 rounded-full font-bold ${adminTab === 'slips' ? 'bg-purple-500/30' : ''}`}>สลิป</button>
+                <button onClick={() => setAdminTab('slips')} className={`flex-1 py-4 rounded-full font-bold ${adminTab === 'slips' ? 'bg-purple-500/30' : ''}`}>เช็คการชำระเงิน</button>
                 <button onClick={() => setIsAdmin(false)} className="px-8 py-4 rounded-full font-bold text-rose-300">ออก</button>
               </div>
 
@@ -252,8 +260,6 @@ export default function Home() {
                   <div className="p-8" style={frostedGlassStyle}>
                     <div className="flex flex-col md:flex-row gap-4 mb-6 items-center justify-between">
                       <input type="number" placeholder="🔍 ค้นหาเลขที่..." value={searchNumber} onChange={e => setSearchNumber(e.target.value)} className="w-full md:w-1/3 p-4 bg-black/40 rounded-full text-center outline-none focus:border-cyan-500" />
-                      
-                      {/* ✨ แถบเมนูหักเงินแบบ Bulk ✨ */}
                       <div className="flex items-center gap-2 w-full md:w-auto bg-black/30 p-2 rounded-full border border-white/10">
                         <span className="text-xs text-slate-300 pl-4">เลือกแล้ว {selectedStudents.length} คน</span>
                         <input type="number" placeholder="ยอดหักกลุ่ม..." value={bulkDeductAmount} onChange={e => setBulkDeductAmount(e.target.value)} className="w-28 p-2 bg-black/50 rounded-full text-center text-sm outline-none" />
@@ -263,22 +269,13 @@ export default function Home() {
 
                     <div className="overflow-x-auto"><table className="w-full text-left min-w-[700px]">
                       <thead><tr className="text-xs uppercase border-b border-white/20">
-                        {/* ✨ Checkbox เลือกทุกคน ✨ */}
-                        <th className="pb-4 pl-4">
-                          <input type="checkbox" onChange={(e) => setSelectedStudents(e.target.checked ? filteredStudents.map(s => s.student_id) : [])} checked={selectedStudents.length === filteredStudents.length && filteredStudents.length > 0} className="w-4 h-4 cursor-pointer" />
-                        </th>
+                        <th className="pb-4 pl-4"><input type="checkbox" onChange={(e) => setSelectedStudents(e.target.checked ? filteredStudents.map(s => s.student_id) : [])} checked={selectedStudents.length === filteredStudents.length && filteredStudents.length > 0} className="w-4 h-4 cursor-pointer" /></th>
                         <th className="pb-4 pl-2">จัดการ</th><th className="pb-4">เลขที่</th><th className="pb-4">ชื่อ</th><th className="pb-4 text-center">ยอดค้าง</th><th className="pb-4 text-center">หักรายคน</th>
                       </tr></thead>
                       <tbody>{filteredStudents.map(std => (
                         <tr key={std.student_id} className="border-b border-white/10 hover:bg-white/5 transition">
-                          {/* ✨ Checkbox รายคน ✨ */}
-                          <td className="py-4 pl-4">
-                            <input type="checkbox" checked={selectedStudents.includes(std.student_id)} onChange={(e) => setSelectedStudents(prev => e.target.checked ? [...prev, std.student_id] : prev.filter(id => id !== std.student_id))} className="w-4 h-4 cursor-pointer" />
-                          </td>
-                          <td className="py-4 pl-2 flex gap-1">
-                            <button onClick={() => handleDeleteStudent(std.student_id, std.first_name)} title="ลบบัญชี" className="p-2 bg-rose-500/10 text-rose-400 rounded-full hover:bg-rose-500 hover:text-white transition">🗑️</button>
-                            <button onClick={() => handleSetIndividualTarget(std.student_id, std.first_name)} title="ตั้งเป้าหมายรายคน" className="p-2 bg-cyan-500/10 text-cyan-400 rounded-full hover:bg-cyan-500 hover:text-white transition">🎯</button>
-                          </td>
+                          <td className="py-4 pl-4"><input type="checkbox" checked={selectedStudents.includes(std.student_id)} onChange={(e) => setSelectedStudents(prev => e.target.checked ? [...prev, std.student_id] : prev.filter(id => id !== std.student_id))} className="w-4 h-4 cursor-pointer" /></td>
+                          <td className="py-4 pl-2 flex gap-1"><button onClick={() => handleDeleteStudent(std.student_id, std.first_name)} title="ลบบัญชี" className="p-2 bg-rose-500/10 text-rose-400 rounded-full hover:bg-rose-500 hover:text-white transition">🗑️</button><button onClick={() => handleSetIndividualTarget(std.student_id, std.first_name)} title="ตั้งเป้าหมายรายคน" className="p-2 bg-cyan-500/10 text-cyan-400 rounded-full hover:bg-cyan-500 hover:text-white transition">🎯</button></td>
                           <td className="py-4 font-mono text-lg text-cyan-200">#{std.student_number}</td><td className="py-4">{std.first_name} {std.last_name}</td>
                           <td className={`py-4 text-center font-black ${std.owed_amount > 0 ? 'text-red-400' : 'text-green-300'}`}>฿{std.owed_amount}</td>
                           <td className="py-4 text-center">{std.owed_amount > 0 ? (<div className="flex gap-2 justify-center"><input type="number" placeholder="฿" value={cashInputs[std.student_id] || ''} onChange={e => setCashInputs({...cashInputs, [std.student_id]: e.target.value})} className="w-16 p-2 bg-black/40 rounded-full text-center outline-none text-xs" /><button onClick={() => handleConfirmCashPartial(std.student_id, std.first_name, std.owed_amount)} className="px-4 py-2 rounded-full text-xs font-bold bg-white/10 hover:bg-white/20">หัก</button></div>) : (<span className="text-green-300 text-xs">✅</span>)}</td>
@@ -290,21 +287,45 @@ export default function Home() {
               )}
 
               {adminTab === 'slips' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {slipList.length === 0 ? <div className="col-span-full py-20 text-center opacity-50">ไม่มีข้อมูล</div> : slipList.map(slip => (
-                    <div key={slip.id} className="p-5 flex flex-col" style={innerGlassStyle}>
-                      <div className={`p-2 rounded-full mb-4 text-center text-[10px] font-bold ${slip.status === 'approved' ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'}`}>{slip.status === 'approved' ? '✅ อนุมัติแล้ว' : '⚠️ รอตรวจสอบ'}</div>
-                      <div className="mb-4 h-64 overflow-hidden rounded-2xl bg-black/40 flex items-center justify-center">{slip.slip_image === 'CASH_PAYMENT' ? <p className="text-6xl">💵</p> : <img src={slip.slip_image} className="w-full h-full object-contain" />}</div>
-                      <div className="text-left mb-5 px-2"><p className="text-xs text-cyan-200">#{slip.student?.student_number} {slip.student?.first_name}</p><p className="text-lg font-bold">ยอด ฿{slip.amount}</p></div>
-                      <div className="grid grid-cols-2 gap-3 mt-auto">
-                        {slip.status === 'approved' ? (
-                          <><button onClick={() => handleDeleteSlip(slip.id)} className="py-3 bg-white/10 rounded-full text-xs">ลบประวัติ</button><button onClick={() => handleRejectFakeSlip(slip.id, slip.student_id, slip.student?.first_name, slip.amount, slip.student?.owed_amount)} className="py-3 bg-red-500/30 rounded-full text-xs font-bold">🚨 ปลอม!</button></>
-                        ) : (
-                          <><button onClick={() => handleDeleteSlip(slip.id)} className="py-3 bg-red-500/20 rounded-full text-xs text-red-300">ไม่อนุมัติ</button><button onClick={() => handleManualApprove(slip.id, slip.student_id, slip.student?.first_name, slip.amount, slip.student?.owed_amount)} className="py-3 bg-emerald-500/30 rounded-full font-bold text-xs">✅ อนุมัติ</button></>
-                        )}
-                      </div>
+                <div className="space-y-6">
+                  {/* ✨ แถบเมนูแยกประเภท และ ตัวกรองวันที่ ✨ */}
+                  <div className="flex flex-col md:flex-row gap-4 justify-between items-center p-4" style={frostedGlassStyle}>
+                    <div className="flex bg-black/40 rounded-full p-1 border border-white/10 w-full md:w-auto">
+                      <button onClick={() => setSlipTypeTab('transfer')} className={`flex-1 md:px-8 py-2 text-sm font-bold rounded-full transition-all ${slipTypeTab === 'transfer' ? 'bg-cyan-500/40 text-white' : 'text-slate-400 hover:text-white'}`}>🏦 สลิปโอนเงิน</button>
+                      <button onClick={() => setSlipTypeTab('cash')} className={`flex-1 md:px-8 py-2 text-sm font-bold rounded-full transition-all ${slipTypeTab === 'cash' ? 'bg-emerald-500/40 text-white' : 'text-slate-400 hover:text-white'}`}>💵 ตรวจเงินสด</button>
                     </div>
-                  ))}
+                    <div className="flex items-center gap-2 w-full md:w-auto">
+                      <span className="text-xs text-slate-300">📅 ค้นหาวันที่:</span>
+                      <input type="date" value={slipDateFilter} onChange={(e) => setSlipDateFilter(e.target.value)} className="p-2 bg-black/50 border border-white/20 rounded-full text-sm outline-none text-white w-full md:w-auto" style={{ colorScheme: 'dark' }} />
+                      {slipDateFilter && <button onClick={() => setSlipDateFilter("")} className="text-xs text-rose-300 hover:text-rose-100">ล้าง</button>}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredSlips.length === 0 ? <div className="col-span-full py-20 text-center opacity-50">ไม่มีข้อมูลการชำระเงินในหมวดหมู่นี้</div> : filteredSlips.map(slip => {
+                      // ✨ แปลงวันที่ให้แสดงผลสวยงาม ✨
+                      const d = new Date(slip.created_at);
+                      const dateStr = slip.created_at ? `${d.toLocaleDateString('th-TH')} เวลา ${d.toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})} น.` : "ไม่ระบุเวลา";
+
+                      return (
+                      <div key={slip.id} className="p-5 flex flex-col" style={innerGlassStyle}>
+                        <div className={`p-2 rounded-full mb-4 text-center text-[10px] font-bold ${slip.status === 'approved' ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'}`}>{slip.status === 'approved' ? '✅ อนุมัติแล้ว' : '⚠️ รอตรวจสอบ'}</div>
+                        <div className="mb-4 h-64 overflow-hidden rounded-2xl bg-black/40 flex items-center justify-center border border-white/5">{slip.slip_image === 'CASH_PAYMENT' ? <p className="text-6xl">💵</p> : <img src={slip.slip_image} className="w-full h-full object-contain" />}</div>
+                        <div className="text-left mb-5 px-2">
+                          <p className="text-[10px] text-slate-400 mb-1">🕒 {dateStr}</p>
+                          <p className="text-xs text-cyan-200">#{slip.student?.student_number} {slip.student?.first_name}</p>
+                          <p className="text-lg font-bold">ยอด ฿{slip.amount}</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 mt-auto">
+                          {slip.status === 'approved' ? (
+                            <><button onClick={() => handleDeleteSlip(slip.id)} className="py-3 bg-white/10 rounded-full text-xs hover:bg-rose-500/30 transition">ลบประวัติ</button><button onClick={() => handleRejectFakeSlip(slip.id, slip.student_id, slip.student?.first_name, slip.amount, slip.student?.owed_amount)} className="py-3 bg-red-500/30 rounded-full text-xs font-bold hover:bg-red-500/50 transition">🚨 ปลอม!</button></>
+                          ) : (
+                            <><button onClick={() => handleDeleteSlip(slip.id)} className="py-3 bg-red-500/20 rounded-full text-xs text-red-300 hover:bg-red-500/40 transition">ไม่อนุมัติ</button><button onClick={() => handleManualApprove(slip.id, slip.student_id, slip.student?.first_name, slip.amount, slip.student?.owed_amount)} className="py-3 bg-emerald-500/30 rounded-full font-bold text-xs hover:bg-emerald-500/50 transition">✅ อนุมัติ</button></>
+                          )}
+                        </div>
+                      </div>
+                    )})}
+                  </div>
                 </div>
               )}
             </div>
@@ -320,23 +341,16 @@ export default function Home() {
                   
                   {currentUser.owedAmount > 0 && (
                     <div className="space-y-4 p-6" style={innerGlassStyle}>
-                      <div className="flex justify-between items-center mb-2">
-                        <p className="text-xs font-bold uppercase tracking-widest text-cyan-200">📱 แจ้งชำระเงิน</p>
-                      </div>
-                      
-                      {/* ✨ Toggle เลือกวิธีจ่ายเงิน ✨ */}
+                      <div className="flex justify-between items-center mb-2"><p className="text-xs font-bold uppercase tracking-widest text-cyan-200">📱 แจ้งชำระเงิน</p></div>
                       <div className="flex bg-black/40 rounded-full p-1 border border-white/10">
                         <button onClick={() => setPaymentMethod('transfer')} className={`flex-1 py-2 text-xs font-bold rounded-full transition-all ${paymentMethod === 'transfer' ? 'bg-cyan-500/40 text-white' : 'text-slate-400 hover:text-white'}`}>🏦 โอนเงิน</button>
                         <button onClick={() => setPaymentMethod('cash')} className={`flex-1 py-2 text-xs font-bold rounded-full transition-all ${paymentMethod === 'cash' ? 'bg-emerald-500/40 text-white' : 'text-slate-400 hover:text-white'}`}>💵 เงินสด</button>
                       </div>
-
                       <input type="number" placeholder="ระบุยอดเงินที่จ่าย..." value={uploadAmount} onChange={e => setUploadAmount(e.target.value)} className="w-full p-4 bg-black/40 rounded-full text-center outline-none border border-white/10 focus:border-cyan-400" />
-                      
                       <div className="text-center">
                         <p className="text-[10px] text-slate-400 mb-2">{paymentMethod === 'transfer' ? "แนบสลิปโอนเงิน (ให้ AI ตรวจอัตโนมัติ)" : "แนบรูปถ่ายยื่นเงินให้เหรัญญิก (รอแอดมินอนุมัติ)"}</p>
                         <input type="file" accept="image/*" onChange={(e) => handleUploadPayment(e.target.files[0])} className="w-full text-xs text-slate-300 file:bg-white/10 file:border-0 file:rounded-full file:px-4 file:py-2 file:text-white file:font-bold cursor-pointer" />
                       </div>
-                      
                       {loading && <p className="text-xs text-center text-yellow-300 animate-pulse font-bold mt-2">✨ กำลังประมวลผล...</p>}
                     </div>
                   )}
@@ -355,7 +369,22 @@ export default function Home() {
             <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="p-10 w-full max-w-sm relative shadow-2xl" style={{ ...frostedGlassStyle, borderRadius: '5rem', background: 'rgba(15, 23, 42, 0.95)' }}>
               <h2 className="text-2xl font-black mb-8 text-center text-cyan-200">{authMode === 'register' ? 'สมัครสมาชิก' : authMode === 'login' ? 'เข้าสู่ระบบ' : 'Admin'}</h2>
               {authMode === 'register' && (
-                <div className="space-y-4"><div className="grid grid-cols-2 gap-3"><input placeholder="ชื่อ" onChange={e => setRegData({...regData, firstName: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><input placeholder="นามสกุล" onChange={e => setRegData({...regData, lastName: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /></div><input placeholder="รหัสนักเรียน" onChange={e => setRegData({...regData, studentId: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><input placeholder="เลขที่" type="number" onChange={e => setRegData({...regData, studentNumber: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><input placeholder="รหัสผ่าน" type="password" onChange={e => setRegData({...regData, password: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><button onClick={async () => { const { error } = await supabase.from('students').insert([{ student_id: regData.studentId, student_number: parseInt(regData.studentNumber), first_name: regData.firstName, last_name: regData.lastName, password: regData.password, owed_amount: 0 }]); if (error) alert(error.message); else setAuthMode('login'); }} className="w-full py-5 bg-emerald-500/30 rounded-full font-bold mt-4 border border-emerald-500/20">ยืนยันสมัคร (฿0)</button></div>
+                <div className="space-y-4"><div className="grid grid-cols-2 gap-3"><input placeholder="ชื่อ" onChange={e => setRegData({...regData, firstName: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><input placeholder="นามสกุล" onChange={e => setRegData({...regData, lastName: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /></div><input placeholder="รหัสนักเรียน" onChange={e => setRegData({...regData, studentId: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><input placeholder="เลขที่" type="number" onChange={e => setRegData({...regData, studentNumber: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><input placeholder="รหัสผ่าน" type="password" onChange={e => setRegData({...regData, password: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" />
+                  <button onClick={async () => { 
+                    setLoading(true);
+                    try {
+                      // ✨ ระบบแอบดึงยอดหนี้เป้าหมายปัจจุบัน (ดึงคนที่ค้างเยอะสุดมาเป็นเป้าหมาย) ✨
+                      const { data: maxOwedData } = await supabase.from('students').select('owed_amount').order('owed_amount', { ascending: false }).limit(1);
+                      const initialOwed = maxOwedData && maxOwedData.length > 0 ? maxOwedData[0].owed_amount : 0;
+                      
+                      const { error } = await supabase.from('students').insert([{ student_id: regData.studentId, student_number: parseInt(regData.studentNumber), first_name: regData.firstName, last_name: regData.lastName, password: regData.password, owed_amount: initialOwed }]); 
+                      if (error) throw error;
+                      alert(`🎉 สมัครสมาชิกเรียบร้อย! (ระบบดึงยอดค้างปัจจุบันให้คุณคือ: ฿${initialOwed})`); setAuthMode('login');
+                    } catch (err) {
+                      alert("เกิดข้อผิดพลาด: " + err.message);
+                    } finally { setLoading(false); }
+                  }} disabled={loading} className="w-full py-5 bg-emerald-500/30 rounded-full font-bold mt-4 border border-emerald-500/20">{loading ? "กำลังโหลด..." : "ยืนยันสมัคร"}</button>
+                </div>
               )}
               {authMode === 'login' && (
                 <div className="space-y-4"><input placeholder="รหัสนักเรียน" onChange={e => setLoginData({...loginData, studentId: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><input placeholder="รหัสผ่าน" type="password" onChange={e => setLoginData({...loginData, password: e.target.value})} className="w-full p-4 bg-black/40 rounded-full text-center border border-white/10" /><button onClick={async () => { const { data } = await supabase.from('students').select('*').eq('student_id', loginData.studentId).eq('password', loginData.password).single(); if (data) { setCurrentUser({ name: `${data.first_name} ${data.last_name}`, studentNumber: data.student_number, studentId: data.student_id, owedAmount: data.owed_amount }); setAuthMode(null); } else alert("ผิดพลาด!"); }} className="w-full py-5 bg-cyan-500/30 rounded-full font-bold border border-cyan-500/20">เข้าสู่ระบบ</button></div>
