@@ -19,13 +19,12 @@ export default function Home() {
   const [cashInputs, setCashInputs] = useState({});
   const [searchNumber, setSearchNumber] = useState(""); 
   
-  // ✨ State สำหรับฟีเจอร์แอดมินสลิป ✨
   const [selectedStudents, setSelectedStudents] = useState([]); 
   const [bulkDeductAmount, setBulkDeductAmount] = useState(""); 
   const [paymentMethod, setPaymentMethod] = useState("transfer"); 
   const [uploadAmount, setUploadAmount] = useState("");
-  const [slipTypeTab, setSlipTypeTab] = useState("transfer"); // แยกประเภทสลิปแอดมิน: 'transfer' | 'cash'
-  const [slipDateFilter, setSlipDateFilter] = useState(""); // ค้นหาสลิปตามวันที่
+  const [slipTypeTab, setSlipTypeTab] = useState("transfer"); 
+  const [slipDateFilter, setSlipDateFilter] = useState(""); 
 
   const [regData, setRegData] = useState({ firstName: '', lastName: '', studentNumber: '', studentId: '', password: '' });
   const [loginData, setLoginData] = useState({ studentId: '', password: '' });
@@ -68,7 +67,7 @@ export default function Home() {
   };
 
   const handleSetIndividualTarget = async (studentId, name) => {
-    const promptAmt = window.prompt(`🎯 ตั้งยอดค้างชำระใหม่ให้ "${name}"\n(ยอดนี้จะถูกทับยอดเดิมของ ${name} คนเดียว):`, 0);
+    const promptAmt = window.prompt(`🎯 ตั้งยอดค้างชำระใหม่ให้ "${name}":`, 0);
     if (promptAmt !== null) {
       const amt = parseInt(promptAmt);
       if (!isNaN(amt) && amt >= 0) {
@@ -179,8 +178,11 @@ export default function Home() {
       reader.readAsDataURL(file);
       reader.onload = async () => {
         const fullBase64 = reader.result; 
+
+        // ✨ แท็กรูปว่าเป็นเงินสดด้วยคำว่า CASH_REQ: ✨
         if (paymentMethod === 'cash') {
-          await supabase.from('transactions').insert([{ student_id: currentUser.studentId, slip_image: fullBase64, status: 'pending', amount: transferAmt }]);
+          const cashImagePayload = "CASH_REQ:" + fullBase64;
+          await supabase.from('transactions').insert([{ student_id: currentUser.studentId, slip_image: cashImagePayload, status: 'pending', amount: transferAmt }]);
           alert(`✅ ส่งรูปยืนยันการจ่ายเงินสดแล้ว! รอแอดมินอนุมัตินะครับ`); window.location.reload(); return;
         }
 
@@ -209,12 +211,15 @@ export default function Home() {
 
   const filteredStudents = studentList.filter(std => searchNumber ? std.student_number.toString() === searchNumber.toString() : true);
   
-  // ✨ กรองสลิปตามประเภท (โอน/เงินสด) และ วันที่ ✨
+  // ✨ อัปเกรดระบบ Filter ให้แยกโอนเงินกับเงินสดขาดขาด ✨
   const filteredSlips = slipList.filter(slip => {
-    const isCash = slip.slip_image === 'CASH_PAYMENT' || (slip.status === 'pending' && !slip.slip_image.startsWith('CASH_PAYMENT') && slip.slip_image.length > 100); 
-    // แยกประเภทสลิป
-    if (slipTypeTab === 'cash' && slip.slip_image !== 'CASH_PAYMENT' && slip.status === 'approved') return false; 
-    if (slipTypeTab === 'transfer' && slip.slip_image === 'CASH_PAYMENT') return false;
+    // เช็คว่ารายการนี้มีแท็กเงินสดหรือไม่
+    const isCashMarker = slip.slip_image === 'CASH_PAYMENT' || slip.slip_image?.startsWith('CASH_REQ:');
+
+    // ถ้ากดดูแท็บเงินสด แต่รายการนี้ไม่ใช่เงินสด -> ซ่อน
+    if (slipTypeTab === 'cash' && !isCashMarker) return false;
+    // ถ้ากดดูแท็บโอนเงิน แต่รายการนี้เป็นเงินสด -> ซ่อน
+    if (slipTypeTab === 'transfer' && isCashMarker) return false;
     
     // ค้นหาตามวันที่
     if (slipDateFilter) {
@@ -288,7 +293,6 @@ export default function Home() {
 
               {adminTab === 'slips' && (
                 <div className="space-y-6">
-                  {/* ✨ แถบเมนูแยกประเภท และ ตัวกรองวันที่ ✨ */}
                   <div className="flex flex-col md:flex-row gap-4 justify-between items-center p-4" style={frostedGlassStyle}>
                     <div className="flex bg-black/40 rounded-full p-1 border border-white/10 w-full md:w-auto">
                       <button onClick={() => setSlipTypeTab('transfer')} className={`flex-1 md:px-8 py-2 text-sm font-bold rounded-full transition-all ${slipTypeTab === 'transfer' ? 'bg-cyan-500/40 text-white' : 'text-slate-400 hover:text-white'}`}>🏦 สลิปโอนเงิน</button>
@@ -303,14 +307,17 @@ export default function Home() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {filteredSlips.length === 0 ? <div className="col-span-full py-20 text-center opacity-50">ไม่มีข้อมูลการชำระเงินในหมวดหมู่นี้</div> : filteredSlips.map(slip => {
-                      // ✨ แปลงวันที่ให้แสดงผลสวยงาม ✨
                       const d = new Date(slip.created_at);
                       const dateStr = slip.created_at ? `${d.toLocaleDateString('th-TH')} เวลา ${d.toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})} น.` : "ไม่ระบุเวลา";
+                      // ตัดแท็กตอนแสดงผลรูปภาพ
+                      const imgSrc = slip.slip_image?.replace('CASH_REQ:', '');
 
                       return (
                       <div key={slip.id} className="p-5 flex flex-col" style={innerGlassStyle}>
                         <div className={`p-2 rounded-full mb-4 text-center text-[10px] font-bold ${slip.status === 'approved' ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'}`}>{slip.status === 'approved' ? '✅ อนุมัติแล้ว' : '⚠️ รอตรวจสอบ'}</div>
-                        <div className="mb-4 h-64 overflow-hidden rounded-2xl bg-black/40 flex items-center justify-center border border-white/5">{slip.slip_image === 'CASH_PAYMENT' ? <p className="text-6xl">💵</p> : <img src={slip.slip_image} className="w-full h-full object-contain" />}</div>
+                        <div className="mb-4 h-64 overflow-hidden rounded-2xl bg-black/40 flex items-center justify-center border border-white/5">
+                          {slip.slip_image === 'CASH_PAYMENT' ? <p className="text-6xl">💵</p> : <img src={imgSrc} className="w-full h-full object-contain" />}
+                        </div>
                         <div className="text-left mb-5 px-2">
                           <p className="text-[10px] text-slate-400 mb-1">🕒 {dateStr}</p>
                           <p className="text-xs text-cyan-200">#{slip.student?.student_number} {slip.student?.first_name}</p>
@@ -363,7 +370,6 @@ export default function Home() {
       </div>
       <footer className="relative z-10 w-full text-center py-6"><p className="text-[10px] uppercase tracking-[0.3em] text-slate-500 font-light opacity-60">develop by <span className="text-cyan-400 font-bold">victor007</span></p></footer>
       
-      {/* Modals */}
       <AnimatePresence>{authMode && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xl">
             <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="p-10 w-full max-w-sm relative shadow-2xl" style={{ ...frostedGlassStyle, borderRadius: '5rem', background: 'rgba(15, 23, 42, 0.95)' }}>
@@ -373,16 +379,13 @@ export default function Home() {
                   <button onClick={async () => { 
                     setLoading(true);
                     try {
-                      // ✨ ระบบแอบดึงยอดหนี้เป้าหมายปัจจุบัน (ดึงคนที่ค้างเยอะสุดมาเป็นเป้าหมาย) ✨
                       const { data: maxOwedData } = await supabase.from('students').select('owed_amount').order('owed_amount', { ascending: false }).limit(1);
                       const initialOwed = maxOwedData && maxOwedData.length > 0 ? maxOwedData[0].owed_amount : 0;
                       
                       const { error } = await supabase.from('students').insert([{ student_id: regData.studentId, student_number: parseInt(regData.studentNumber), first_name: regData.firstName, last_name: regData.lastName, password: regData.password, owed_amount: initialOwed }]); 
                       if (error) throw error;
-                      alert(`🎉 สมัครสมาชิกเรียบร้อย! (ระบบดึงยอดค้างปัจจุบันให้คุณคือ: ฿${initialOwed})`); setAuthMode('login');
-                    } catch (err) {
-                      alert("เกิดข้อผิดพลาด: " + err.message);
-                    } finally { setLoading(false); }
+                      alert(`🎉 สมัครสมาชิกเรียบร้อย! (ยอดค้างเริ่มต้น: ฿${initialOwed})`); setAuthMode('login');
+                    } catch (err) { alert("เกิดข้อผิดพลาด: " + err.message); } finally { setLoading(false); }
                   }} disabled={loading} className="w-full py-5 bg-emerald-500/30 rounded-full font-bold mt-4 border border-emerald-500/20">{loading ? "กำลังโหลด..." : "ยืนยันสมัคร"}</button>
                 </div>
               )}
